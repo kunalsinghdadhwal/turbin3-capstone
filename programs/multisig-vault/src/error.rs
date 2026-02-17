@@ -24,7 +24,8 @@ pub enum VaultError {
     InsufficientBalance,
     #[msg("Duplicate signer in list")]
     DuplicateSigner,
-    // Phase 2
+
+    // PYTH ERROR CODES
     #[msg("Price condition not met")]
     PriceConditionNotMet,
     #[msg("Price feed is stale")]
