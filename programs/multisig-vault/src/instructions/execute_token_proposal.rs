@@ -4,8 +4,7 @@ use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{transfer, Mint, Token, TokenAccount, Transfer};
-use rust_decimal::Decimal;
-use switchboard_on_demand::PullFeedAccountData;
+use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
 #[derive(Accounts)]
 pub struct ExecuteTokenProposal<'info> {
@@ -52,8 +51,8 @@ pub struct ExecuteTokenProposal<'info> {
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 
-    /// CHECK: optional Switchboard pull feed account, validated in handler
-    pub price_feed: Option<UncheckedAccount<'info>>,
+    /// Optional Pyth price update account, validated in handler
+    pub price_update: Option<Account<'info, PriceUpdateV2>>,
 }
 
 pub fn handler(ctx: Context<ExecuteTokenProposal>) -> Result<()> {
@@ -73,34 +72,23 @@ pub fn handler(ctx: Context<ExecuteTokenProposal>) -> Result<()> {
         VaultError::UnauthorizedSigner
     );
 
-    // Switchboard price gate
+    // Pyth price gate
     if let Some(ref condition) = proposal.price_condition {
-        let feed_account = ctx
+        let price_update = ctx
             .accounts
-            .price_feed
+            .price_update
             .as_ref()
             .ok_or(error!(VaultError::PriceConditionNotMet))?;
 
-        require!(
-            feed_account.key() == condition.feed,
-            VaultError::PriceConditionNotMet
-        );
-
-        let feed_data = PullFeedAccountData::parse(feed_account.try_borrow_data()?)
-            .map_err(|_| error!(VaultError::StalePriceFeed))?;
-
-        let clock = Clock::get()?;
-        let price: Decimal = feed_data
-            .get_value(clock.slot, condition.max_stale_slots, 1, true)
+        let price = price_update
+            .get_price_no_older_than(&Clock::get()?, condition.max_age_secs, &condition.feed_id)
             .map_err(|_| error!(VaultError::StalePriceFeed))?;
 
         if let Some(min_price) = condition.min_price {
-            let min = Decimal::new(min_price, 8);
-            require!(price >= min, VaultError::PriceConditionNotMet);
+            require!(price.price >= min_price, VaultError::PriceConditionNotMet);
         }
         if let Some(max_price) = condition.max_price {
-            let max = Decimal::new(max_price, 8);
-            require!(price <= max, VaultError::PriceConditionNotMet);
+            require!(price.price <= max_price, VaultError::PriceConditionNotMet);
         }
     }
 

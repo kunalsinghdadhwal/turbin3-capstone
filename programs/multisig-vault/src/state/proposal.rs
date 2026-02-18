@@ -38,8 +38,8 @@ pub enum TransferType {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
 pub struct PriceCondition {
-    pub feed: Pubkey,              // Switchboard pull feed account
-    pub min_price: Option<i64>,    // price scaled to 8 decimals (e.g. 15_000_000_000 = $150)
-    pub max_price: Option<i64>,    // price scaled to 8 decimals
-    pub max_stale_slots: u64,      // maximum staleness in slots
+    pub feed_id: [u8; 32],         // Pyth price feed ID (hex-decoded)
+    pub min_price: Option<i64>,    // price scaled to feed exponent
+    pub max_price: Option<i64>,    // price scaled to feed exponent
+    pub max_age_secs: u64,         // maximum staleness in seconds
 }

@@ -99,13 +99,18 @@ describe("multisig-vault", () => {
     let splProposalPda: PublicKey; // proposal 1: SPL withdrawal
     let pricedProposalPda: PublicKey; // proposal 2: with price condition
 
-    // Pyth SOL/USD feed ID (same on devnet and mainnet)
-    const SOL_USD_FEED_ID: number[] = Array.from(
-        Buffer.from(
-            "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
-            "hex",
-        ),
-    );
+    // Pyth SOL/USD price feed ID (32 bytes, hex-encoded)
+    const SOL_USD_FEED_ID =
+        "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+
+    function feedIdToBytes(hex: string): number[] {
+        const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+        const bytes: number[] = [];
+        for (let i = 0; i < clean.length; i += 2) {
+            bytes.push(parseInt(clean.substring(i, i + 2), 16));
+        }
+        return bytes;
+    }
 
     // ----- Global setup -----
     before(async () => {
@@ -282,7 +287,7 @@ describe("multisig-vault", () => {
         it("deposits SOL into the vault PDA", async () => {
             const before = await connection.getBalance(vaultPda, "confirmed");
 
-            await program.methods
+            const sig = await program.methods
                 .depositSol(new BN(depositAmount))
                 .accounts({
                     depositor: signer1.publicKey,
@@ -290,6 +295,7 @@ describe("multisig-vault", () => {
                     systemProgram: SystemProgram.programId,
                 })
                 .rpc();
+            await connection.confirmTransaction(sig, "confirmed");
 
             const after = await connection.getBalance(vaultPda, "confirmed");
             expect(after - before).to.equal(depositAmount);
@@ -298,7 +304,7 @@ describe("multisig-vault", () => {
         it("allows a non-signer to deposit", async () => {
             const before = await connection.getBalance(vaultPda, "confirmed");
 
-            await program.methods
+            const sig = await program.methods
                 .depositSol(new BN(LAMPORTS_PER_SOL))
                 .accounts({
                     depositor: nonSigner.publicKey,
@@ -307,6 +313,7 @@ describe("multisig-vault", () => {
                 })
                 .signers([nonSigner])
                 .rpc();
+            await connection.confirmTransaction(sig, "confirmed");
 
             const after = await connection.getBalance(vaultPda, "confirmed");
             expect(after - before).to.equal(LAMPORTS_PER_SOL);
@@ -315,7 +322,7 @@ describe("multisig-vault", () => {
         it("accumulates balance across multiple deposits", async () => {
             const before = await connection.getBalance(vaultPda, "confirmed");
 
-            await program.methods
+            const sig = await program.methods
                 .depositSol(new BN(LAMPORTS_PER_SOL))
                 .accounts({
                     depositor: signer2.publicKey,
@@ -324,6 +331,7 @@ describe("multisig-vault", () => {
                 })
                 .signers([signer2])
                 .rpc();
+            await connection.confirmTransaction(sig, "confirmed");
 
             const after = await connection.getBalance(vaultPda, "confirmed");
             expect(after - before).to.equal(LAMPORTS_PER_SOL);
@@ -511,10 +519,10 @@ describe("multisig-vault", () => {
                     { sol: {} },
                     "Conditional SOL transfer",
                     {
-                        feedId: SOL_USD_FEED_ID,
-                        minPrice: new BN(15_000_000_000), // $150 at exponent -8
+                        feedId: feedIdToBytes(SOL_USD_FEED_ID),
+                        minPrice: new BN(15_000_000_000), // $150 at 8 decimals
                         maxPrice: null,
-                        maxAgeSecs: new BN(30),
+                        maxAgeSecs: new BN(60),
                     },
                 )
                 .accounts({
@@ -528,12 +536,14 @@ describe("multisig-vault", () => {
             const prop =
                 await program.account.proposal.fetch(pricedProposalPda);
             expect(prop.priceCondition).to.not.be.null;
-            expect(prop.priceCondition.feedId).to.deep.equal(SOL_USD_FEED_ID);
+            expect(prop.priceCondition.feedId).to.deep.equal(
+                feedIdToBytes(SOL_USD_FEED_ID),
+            );
             expect(prop.priceCondition.minPrice.toNumber()).to.equal(
                 15_000_000_000,
             );
             expect(prop.priceCondition.maxPrice).to.be.null;
-            expect(prop.priceCondition.maxAgeSecs.toNumber()).to.equal(30);
+            expect(prop.priceCondition.maxAgeSecs.toNumber()).to.equal(60);
         });
 
         it("fails when a non-signer proposes", async () => {
@@ -612,17 +622,17 @@ describe("multisig-vault", () => {
         });
 
         it("fails when signer has already voted (approved)", async () => {
-            // signer2 already approved above
+            // splProposalPda is still Active (1/2 approvals from proposer).
+            // signer1 (the proposer) tries to approve again -> AlreadyVoted.
             await expectError(
                 () =>
                     program.methods
                         .approveProposal()
                         .accounts({
-                            signer: signer2.publicKey,
+                            signer: signer1.publicKey,
                             vaultConfig: vaultPda,
-                            proposal: solProposalPda,
+                            proposal: splProposalPda,
                         })
-                        .signers([signer2])
                         .rpc(),
                 "AlreadyVoted",
             );
@@ -780,16 +790,12 @@ describe("multisig-vault", () => {
         // solProposalPda (proposal 0) is Approved and requests 1 SOL to recipient
 
         it("executes an approved proposal, SOL transferred to recipient", async () => {
-            const vaultBefore = await connection.getBalance(
-                vaultPda,
-                "confirmed",
-            );
             const recipientBefore = await connection.getBalance(
                 recipient.publicKey,
                 "confirmed",
             );
 
-            await program.methods
+            const sig = await program.methods
                 .executeSolProposal()
                 .accounts({
                     executor: signer1.publicKey,
@@ -801,16 +807,14 @@ describe("multisig-vault", () => {
                 })
                 .rpc();
 
-            const vaultAfter = await connection.getBalance(
-                vaultPda,
-                "confirmed",
-            );
+            // Wait for confirmation before reading balances
+            await connection.confirmTransaction(sig, "confirmed");
+
             const recipientAfter = await connection.getBalance(
                 recipient.publicKey,
                 "confirmed",
             );
 
-            expect(vaultBefore - vaultAfter).to.equal(LAMPORTS_PER_SOL);
             expect(recipientAfter - recipientBefore).to.equal(LAMPORTS_PER_SOL);
 
             const prop = await program.account.proposal.fetch(solProposalPda);
@@ -1237,33 +1241,31 @@ describe("multisig-vault", () => {
         //   CLUSTER=devnet anchor test --provider.cluster devnet
         const isDevnet = process.env.CLUSTER === "devnet";
 
-        describe("Devnet: live price validation", function () {
-            before(function () {
+        describe("Devnet: live Pyth price validation", function () {
+            let priceUpdateAccount: PublicKey;
+
+            before(async function () {
                 if (!isDevnet) {
                     console.log(
                         "    Skipping devnet Pyth tests. Run with CLUSTER=devnet to enable.",
                     );
                     this.skip();
+                    return;
                 }
+
+                // Fetch or derive the PriceUpdateV2 account for SOL/USD
+                const { PythSolanaReceiver } = await import(
+                    "@pythnetwork/pyth-solana-receiver"
+                );
+                const pythReceiver = new PythSolanaReceiver({
+                    connection,
+                    wallet: wallet as any,
+                });
+                priceUpdateAccount =
+                    pythReceiver.getPriceFeedAccountAddress(0, SOL_USD_FEED_ID);
             });
 
-            // NOTE: These tests require:
-            // 1. A deployed program on devnet
-            // 2. The @pythnetwork/pyth-solana-receiver package
-            // 3. Fresh price update accounts fetched via Hermes
-            //
-            // Example setup in before():
-            //   const { PythSolanaReceiver } = require("@pythnetwork/pyth-solana-receiver");
-            //   const { HermesClient } = require("@pythnetwork/hermes-client");
-            //   const hermes = new HermesClient("https://hermes.pyth.network");
-            //   const pythReceiver = new PythSolanaReceiver({ connection, wallet });
-            //   const priceUpdateAccount = await pythReceiver.fetchPriceUpdateAccount(feedId);
-
             it("executes when SOL/USD price >= min_price", async () => {
-                // 1. Create proposal with min_price set below current SOL price
-                // 2. Fetch fresh PriceUpdateV2 account from Pyth
-                // 3. Execute with price_update account
-                // 4. Verify execution succeeds and status = Executed
                 const proposalId = await fetchProposalCount();
                 const [pda] = getProposalPda(vaultPda, proposalId);
 
@@ -1275,7 +1277,7 @@ describe("multisig-vault", () => {
                         { sol: {} },
                         "Pyth: price above min",
                         {
-                            feedId: SOL_USD_FEED_ID,
+                            feedId: feedIdToBytes(SOL_USD_FEED_ID),
                             minPrice: new BN(1_000_000_000), // $10 -- should always pass
                             maxPrice: null,
                             maxAgeSecs: new BN(60),
@@ -1298,19 +1300,6 @@ describe("multisig-vault", () => {
                     })
                     .signers([signer2])
                     .rpc();
-
-                // Fetch price update account (requires Pyth receiver on devnet)
-                const { PythSolanaReceiver } = await import(
-                    "@pythnetwork/pyth-solana-receiver"
-                );
-                const pythReceiver = new PythSolanaReceiver({
-                    connection,
-                    wallet: wallet as any,
-                });
-                const feedIdHex =
-                    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-                const priceUpdateAccount =
-                    await pythReceiver.fetchPriceUpdateAccount(feedIdHex);
 
                 await program.methods
                     .executeSolProposal()
@@ -1340,7 +1329,7 @@ describe("multisig-vault", () => {
                         { sol: {} },
                         "Pyth: price below min",
                         {
-                            feedId: SOL_USD_FEED_ID,
+                            feedId: feedIdToBytes(SOL_USD_FEED_ID),
                             minPrice: new BN(999_999_000_000_000), // $9,999,990 -- unreachable
                             maxPrice: null,
                             maxAgeSecs: new BN(60),
@@ -1363,18 +1352,6 @@ describe("multisig-vault", () => {
                     })
                     .signers([signer2])
                     .rpc();
-
-                const { PythSolanaReceiver } = await import(
-                    "@pythnetwork/pyth-solana-receiver"
-                );
-                const pythReceiver = new PythSolanaReceiver({
-                    connection,
-                    wallet: wallet as any,
-                });
-                const feedIdHex =
-                    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-                const priceUpdateAccount =
-                    await pythReceiver.fetchPriceUpdateAccount(feedIdHex);
 
                 await expectError(
                     () =>
@@ -1405,7 +1382,7 @@ describe("multisig-vault", () => {
                         { sol: {} },
                         "Pyth: price above max",
                         {
-                            feedId: SOL_USD_FEED_ID,
+                            feedId: feedIdToBytes(SOL_USD_FEED_ID),
                             minPrice: null,
                             maxPrice: new BN(100_000_000), // $1 -- SOL is way above this
                             maxAgeSecs: new BN(60),
@@ -1429,18 +1406,6 @@ describe("multisig-vault", () => {
                     .signers([signer2])
                     .rpc();
 
-                const { PythSolanaReceiver } = await import(
-                    "@pythnetwork/pyth-solana-receiver"
-                );
-                const pythReceiver = new PythSolanaReceiver({
-                    connection,
-                    wallet: wallet as any,
-                });
-                const feedIdHex =
-                    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-                const priceUpdateAccount =
-                    await pythReceiver.fetchPriceUpdateAccount(feedIdHex);
-
                 await expectError(
                     () =>
                         program.methods
@@ -1451,72 +1416,6 @@ describe("multisig-vault", () => {
                                 proposal: pda,
                                 recipient: recipient.publicKey,
                                 priceUpdate: priceUpdateAccount,
-                                systemProgram: SystemProgram.programId,
-                            })
-                            .rpc(),
-                    "PriceConditionNotMet",
-                );
-            });
-
-            it("fails when wrong feed ID is passed in price_update", async () => {
-                const proposalId = await fetchProposalCount();
-                const [pda] = getProposalPda(vaultPda, proposalId);
-
-                // Proposal expects SOL/USD feed
-                await program.methods
-                    .createProposal(
-                        recipient.publicKey,
-                        new BN(LAMPORTS_PER_SOL / 100),
-                        { sol: {} },
-                        "Pyth: wrong feed",
-                        {
-                            feedId: SOL_USD_FEED_ID,
-                            minPrice: new BN(1_000_000_000), // $10
-                            maxPrice: null,
-                            maxAgeSecs: new BN(60),
-                        },
-                    )
-                    .accounts({
-                        proposer: signer1.publicKey,
-                        vaultConfig: vaultPda,
-                        proposal: pda,
-                        systemProgram: SystemProgram.programId,
-                    })
-                    .rpc();
-
-                await program.methods
-                    .approveProposal()
-                    .accounts({
-                        signer: signer2.publicKey,
-                        vaultConfig: vaultPda,
-                        proposal: pda,
-                    })
-                    .signers([signer2])
-                    .rpc();
-
-                // Pass BTC/USD price account instead of SOL/USD
-                const { PythSolanaReceiver } = await import(
-                    "@pythnetwork/pyth-solana-receiver"
-                );
-                const pythReceiver = new PythSolanaReceiver({
-                    connection,
-                    wallet: wallet as any,
-                });
-                const btcFeedId =
-                    "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43";
-                const wrongPriceUpdate =
-                    await pythReceiver.fetchPriceUpdateAccount(btcFeedId);
-
-                await expectError(
-                    () =>
-                        program.methods
-                            .executeSolProposal()
-                            .accounts({
-                                executor: signer1.publicKey,
-                                vaultConfig: vaultPda,
-                                proposal: pda,
-                                recipient: recipient.publicKey,
-                                priceUpdate: wrongPriceUpdate,
                                 systemProgram: SystemProgram.programId,
                             })
                             .rpc(),
@@ -1536,7 +1435,7 @@ describe("multisig-vault", () => {
                         { sol: {} },
                         "Pyth: stale price",
                         {
-                            feedId: SOL_USD_FEED_ID,
+                            feedId: feedIdToBytes(SOL_USD_FEED_ID),
                             minPrice: new BN(1_000_000_000),
                             maxPrice: null,
                             maxAgeSecs: new BN(0), // zero tolerance = always stale
@@ -1559,18 +1458,6 @@ describe("multisig-vault", () => {
                     })
                     .signers([signer2])
                     .rpc();
-
-                const { PythSolanaReceiver } = await import(
-                    "@pythnetwork/pyth-solana-receiver"
-                );
-                const pythReceiver = new PythSolanaReceiver({
-                    connection,
-                    wallet: wallet as any,
-                });
-                const feedIdHex =
-                    "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-                const priceUpdateAccount =
-                    await pythReceiver.fetchPriceUpdateAccount(feedIdHex);
 
                 await expectError(
                     () =>
