@@ -4,6 +4,10 @@ A Solana program for managing shared funds with threshold-based approvals. Built
 
 **Devnet Program ID:** [`EL9AsYrsmVDm4HTd7dCWnJJgadksCGkJfyFCw4WTfaZp`](https://explorer.solana.com/address/EL9AsYrsmVDm4HTd7dCWnJJgadksCGkJfyFCw4WTfaZp?cluster=devnet)
 
+Passing Tests
+<img width="1245" height="950" alt="image" src="https://github.com/user-attachments/assets/b25761fb-5d16-4d30-80b7-d2e608e069bd" />
+
+
 ## Overview
 
 Multisig Vault lets a group of signers collectively control a treasury. Transfers require a configurable number of approvals (M-of-N) before execution. Supports both native SOL and SPL token transfers.
