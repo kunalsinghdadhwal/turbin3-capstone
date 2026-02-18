@@ -56,8 +56,23 @@ describe("multisig-vault", () => {
 
     // ----- Utility helpers -----
     async function airdrop(to: PublicKey, sol: number) {
-        const sig = await connection.requestAirdrop(to, sol * LAMPORTS_PER_SOL);
-        await connection.confirmTransaction(sig, "confirmed");
+        if (process.env.CLUSTER === "devnet") {
+            // Devnet faucet is rate-limited; transfer from wallet instead
+            const tx = new anchor.web3.Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: wallet.publicKey,
+                    toPubkey: to,
+                    lamports: sol * LAMPORTS_PER_SOL,
+                }),
+            );
+            await provider.sendAndConfirm(tx);
+        } else {
+            const sig = await connection.requestAirdrop(
+                to,
+                sol * LAMPORTS_PER_SOL,
+            );
+            await connection.confirmTransaction(sig, "confirmed");
+        }
     }
 
     async function expectError(fn: () => Promise<any>, errorCode: string) {
@@ -113,12 +128,15 @@ describe("multisig-vault", () => {
     }
 
     // ----- Global setup -----
+    const isDevnet = process.env.CLUSTER === "devnet";
+    const fundingAmount = isDevnet ? 0.2 : 5; // devnet wallet has limited SOL
+
     before(async () => {
         await Promise.all([
-            airdrop(signer2.publicKey, 5),
-            airdrop(signer3.publicKey, 5),
-            airdrop(nonSigner.publicKey, 5),
-            airdrop(recipient.publicKey, 1),
+            airdrop(signer2.publicKey, fundingAmount),
+            airdrop(signer3.publicKey, fundingAmount),
+            airdrop(nonSigner.publicKey, fundingAmount),
+            airdrop(recipient.publicKey, isDevnet ? 0.05 : 1),
         ]);
     });
 
@@ -1182,7 +1200,7 @@ describe("multisig-vault", () => {
                     "confirmed",
                 );
 
-                await program.methods
+                const sig = await program.methods
                     .executeSolProposal()
                     .accounts({
                         executor: signer1.publicKey,
@@ -1193,6 +1211,7 @@ describe("multisig-vault", () => {
                         systemProgram: SystemProgram.programId,
                     })
                     .rpc();
+                await connection.confirmTransaction(sig, "confirmed");
 
                 const recipientAfter = await connection.getBalance(
                     recipient.publicKey,
@@ -1239,7 +1258,6 @@ describe("multisig-vault", () => {
         // --- Devnet tests (require real Pyth price feeds) ---
         // Set CLUSTER=devnet to enable these tests:
         //   CLUSTER=devnet anchor test --provider.cluster devnet
-        const isDevnet = process.env.CLUSTER === "devnet";
 
         describe("Devnet: live Pyth price validation", function () {
             let priceUpdateAccount: PublicKey;
