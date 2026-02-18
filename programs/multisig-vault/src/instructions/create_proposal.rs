@@ -19,7 +19,7 @@ pub struct CreateProposal<'info> {
         init,
         payer = proposer,
         space = 8 + Proposal::INIT_SPACE,
-        seeds = [PROPOSAL_SEED, vault_config.key().as_ref(), vault_config.proposal_cnt.to_le_bytes().as_ref()],
+        seeds = [PROPOSAL_SEED, vault_config.key().as_ref(), vault_config.proposal_count.to_le_bytes().as_ref()],
         bump,
     )]
     pub proposal: Account<'info, Proposal>,
@@ -48,7 +48,7 @@ pub fn handler(
 
     let proposal = &mut ctx.accounts.proposal;
     proposal.vault = vault.key();
-    proposal.proposal_id = vault.proposal_cnt;
+    proposal.proposal_id = vault.proposal_count;
     proposal.proposer = ctx.accounts.proposer.key();
     proposal.recipient = recipient;
     proposal.amount = amount;
@@ -65,7 +65,7 @@ pub fn handler(
         proposal.status = ProposalStatus::Approved;
     }
 
-    ctx.accounts.vault_config.proposal_cnt += 1;
+    ctx.accounts.vault_config.proposal_count += 1;
 
     Ok(())
 }

@@ -37,7 +37,7 @@ pub fn handler(ctx: Context<Initialize>, signers: Vec<Pubkey>, threshold: u8) ->
     vault.creator = ctx.accounts.creator.key();
     vault.signers = signers;
     vault.threshold = threshold;
-    vault.proposal_cnt = 0;
+    vault.proposal_count = 0;
     vault.bump = ctx.bumps.vault_config;
 
     Ok(())

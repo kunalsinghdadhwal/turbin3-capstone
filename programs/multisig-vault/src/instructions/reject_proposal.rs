@@ -17,7 +17,7 @@ pub struct RejectProposal<'info> {
         mut,
         seeds = [PROPOSAL_SEED, vault_config.key().as_ref(), proposal.proposal_id.to_le_bytes().as_ref()],
         bump = proposal.bump,
-        has_one = vault @ VaultError::UnauthorizedSigner,
+        constraint = proposal.vault == vault_config.key() @ VaultError::UnauthorizedSigner,
     )]
     pub proposal: Account<'info, Proposal>,
 }

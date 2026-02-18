@@ -8,6 +8,6 @@ pub struct VaultConfig {
     #[max_len(MAX_SIGNERS)]
     pub signers: Vec<Pubkey>,
     pub threshold: u8,
-    pub proposal_cnt: u64,
+    pub proposal_count: u64,
     pub bump: u8,
 }

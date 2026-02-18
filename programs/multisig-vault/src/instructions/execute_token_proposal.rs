@@ -1,8 +1,11 @@
 use crate::constants::*;
+use crate::error::VaultError;
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::token::{transfer, Mint, Token, TokenAccount, Transfer};
+use rust_decimal::Decimal;
+use switchboard_on_demand::PullFeedAccountData;
 
 #[derive(Accounts)]
 pub struct ExecuteTokenProposal<'info> {
@@ -20,7 +23,7 @@ pub struct ExecuteTokenProposal<'info> {
         mut,
         seeds = [PROPOSAL_SEED, vault_config.key().as_ref(), proposal.proposal_id.to_le_bytes().as_ref()],
         bump = proposal.bump,
-        has_one = vault,
+        constraint = proposal.vault == vault_config.key() @ VaultError::UnauthorizedSigner,
     )]
     pub proposal: Account<'info, Proposal>,
 
@@ -49,11 +52,82 @@ pub struct ExecuteTokenProposal<'info> {
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 
-    /// CHECK: optional Pyth price update account
-    pub price_update: Option<UncheckedAccount<'info>>,
+    /// CHECK: optional Switchboard pull feed account, validated in handler
+    pub price_feed: Option<UncheckedAccount<'info>>,
 }
 
-pub fn handler(_ctx: Context<ExecuteTokenProposal>) -> Result<()> {
-    // TODO: implement
+pub fn handler(ctx: Context<ExecuteTokenProposal>) -> Result<()> {
+    let proposal = &mut ctx.accounts.proposal;
+    let vault_config = &ctx.accounts.vault_config;
+
+    require!(
+        proposal.status == ProposalStatus::Approved,
+        VaultError::ProposalNotActive
+    );
+    require!(
+        vault_config.signers.contains(&ctx.accounts.executor.key()),
+        VaultError::UnauthorizedSigner
+    );
+    require!(
+        proposal.recipient == ctx.accounts.recipient.key(),
+        VaultError::UnauthorizedSigner
+    );
+
+    // Switchboard price gate
+    if let Some(ref condition) = proposal.price_condition {
+        let feed_account = ctx
+            .accounts
+            .price_feed
+            .as_ref()
+            .ok_or(error!(VaultError::PriceConditionNotMet))?;
+
+        require!(
+            feed_account.key() == condition.feed,
+            VaultError::PriceConditionNotMet
+        );
+
+        let feed_data = PullFeedAccountData::parse(feed_account.try_borrow_data()?)
+            .map_err(|_| error!(VaultError::StalePriceFeed))?;
+
+        let clock = Clock::get()?;
+        let price: Decimal = feed_data
+            .get_value(clock.slot, condition.max_stale_slots, 1, true)
+            .map_err(|_| error!(VaultError::StalePriceFeed))?;
+
+        if let Some(min_price) = condition.min_price {
+            let min = Decimal::new(min_price, 8);
+            require!(price >= min, VaultError::PriceConditionNotMet);
+        }
+        if let Some(max_price) = condition.max_price {
+            let max = Decimal::new(max_price, 8);
+            require!(price <= max, VaultError::PriceConditionNotMet);
+        }
+    }
+
+    require!(
+        ctx.accounts.vault_ata.amount >= proposal.amount,
+        VaultError::InsufficientBalance
+    );
+
+    // PDA signer seeds for the vault
+    let creator = vault_config.creator;
+    let bump = [vault_config.bump];
+    let signer_seeds: &[&[&[u8]]] = &[&[VAULT_SEED, creator.as_ref(), &bump]];
+
+    transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.vault_ata.to_account_info(),
+                to: ctx.accounts.recipient_ata.to_account_info(),
+                authority: vault_config.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        proposal.amount,
+    )?;
+
+    proposal.status = ProposalStatus::Executed;
+
     Ok(())
 }
