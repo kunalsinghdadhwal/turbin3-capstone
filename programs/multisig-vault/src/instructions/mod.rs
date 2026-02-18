@@ -8,6 +8,7 @@ pub mod execute_token_proposal;
 pub mod initialize;
 pub mod reject_proposal;
 
+#[allow(ambiguous_glob_reexports)]
 pub use approve_proposal::*;
 pub use cancel_proposal::*;
 pub use create_proposal::*;
