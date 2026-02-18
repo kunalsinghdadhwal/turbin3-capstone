@@ -38,8 +38,8 @@ pub enum TransferType {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
 pub struct PriceCondition {
-    pub feed_id: [u8; 32],         // Pyth price feed ID (hex-decoded)
-    pub min_price: Option<i64>,    // price scaled to feed exponent
-    pub max_price: Option<i64>,    // price scaled to feed exponent
-    pub max_age_secs: u64,         // maximum staleness in seconds
+    pub feed_id: [u8; 32],      // Pyth price feed ID (hex-decoded)
+    pub min_price: Option<i64>, // price scaled to feed exponent
+    pub max_price: Option<i64>, // price scaled to feed exponent
+    pub max_age_secs: u64,      // maximum staleness in seconds
 }

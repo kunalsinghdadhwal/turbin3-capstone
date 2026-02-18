@@ -10,8 +10,6 @@
     "@solana/web3.js": "^1.95.0"
   },
   "devDependencies": {
-    "@pythnetwork/pyth-solana-receiver": "^0.10.0",
-    "@pythnetwork/hermes-client": "^1.4.0",
     "@types/bn.js": "^5.1.0",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^9.0.0",
